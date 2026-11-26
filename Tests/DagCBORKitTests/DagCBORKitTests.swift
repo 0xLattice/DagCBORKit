@@ -44,6 +44,13 @@ struct Keyed {
     }
 }
 
+/// A key it once had is refused, and one naming a field is not.
+@DagCBORCodable
+struct Retired {
+    let kept: UInt64
+    static var refusedKeys: [String] { ["gone", "kept"] }
+}
+
 /// What a reader or writer does is stated in bytes: the canonical DAG-CBOR
 /// of a value, and the verdict on every other spelling.
 @Suite("DAG-CBOR is read and written in its one canonical form")
@@ -131,6 +138,18 @@ struct DagCBORKitTests {
         #expect(try JSONDecoder().decode(Keyed.self, from: Data(json.utf8)).b == 2)
         let bytes = Self.bytes([0xa2], Self.text("bee"), [0x02], Self.text("default"), [0x01])
         #expect(try DagCBORCanonical.encode(Keyed(default: 1, b: 2, note: nil)) == bytes)
+    }
+
+    @Test("A refused key is refused by both decodings")
+    func refusedKeys() throws {
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Retired.self, from: Data(#"{"kept":1,"gone":2}"#.utf8))
+        }
+        #expect(try JSONDecoder().decode(Retired.self, from: Data(#"{"kept":1}"#.utf8)).kept == 1)
+        let withGone = Self.bytes([0xa2], Self.text("gone"), [0x02], Self.text("kept"), [0x01])
+        #expect(throws: (any Error).self) { try DagCBORCanonical.decode(Retired.self, from: Data(withGone)) }
+        let kept = Self.bytes([0xa1], Self.text("kept"), [0x01])
+        #expect(try DagCBORCanonical.decode(Retired.self, from: Data(kept)).kept == 1)
     }
 
     @Test("A rule over the fields together refuses a value whose fields read")

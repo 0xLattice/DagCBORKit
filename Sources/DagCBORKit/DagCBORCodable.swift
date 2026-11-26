@@ -20,15 +20,16 @@ public protocol DagCBORCodable {
     /// Generated readers (`@DagCBORCodable`) call it once every field is
     /// read. None by default.
     func checkDagCBORFields() throws
-    /// Refuses a `Codable` input before its fields are read, for a rule over
-    /// the input itself (keys it must not carry, say). The generated
-    /// `init(from:)` calls it. None by default.
-    static func checkDecoding(from decoder: any Decoder) throws
+    /// Keys a `Codable` input must not carry (fields a type once had, say),
+    /// which the generated `init(from:)` refuses rather than ignores. DAG-CBOR
+    /// refuses every key that is not a field already, so both refuse the same
+    /// inputs; a key naming a field is not refused. None by default.
+    static var refusedKeys: [String] { get }
 }
 
 extension DagCBORCodable {
     @inlinable public func checkDagCBORFields() throws {}
-    @inlinable public static func checkDecoding(from decoder: any Decoder) throws {}
+    @inlinable public static var refusedKeys: [String] { [] }
 }
 
 /// A `Codable` key that is its text: what `@DagCBORCodable`'s `Codable`
@@ -47,6 +48,17 @@ public struct DagCBORKey: CodingKey {
     @inlinable public var intValue: Int? { nil }
 
     @inlinable public init?(intValue: Int) { nil }
+
+    /// Throws if `container` holds any of `refused` but those in `fields`.
+    @inlinable public static func refuse(
+        _ refused: [String], except fields: [String], in container: KeyedDecodingContainer<DagCBORKey>
+    ) throws {
+        for key in refused where !fields.contains(key) && container.contains(DagCBORKey(key)) {
+            throw DecodingError.dataCorruptedError(
+                forKey: DagCBORKey(key), in: container, debugDescription: "the key \(key) is refused"
+            )
+        }
+    }
 }
 
 /// Reads DAG-CBOR items in order from encoded bytes. Heads of any width are

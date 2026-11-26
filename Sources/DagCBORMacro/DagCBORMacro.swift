@@ -10,11 +10,14 @@
 ///   entries are in canonical key order, worked out when compiling.
 /// - An optional property is absent when `nil`.
 /// - `init(from:)` and `init(dagCBOR:)` both call `checkDagCBORFields()` once
-///   every field is read, for a rule over the fields together; `init(from:)`
-///   first calls `checkDecoding(from:)`, for a rule over the input itself.
+///   every field is read, for a rule over the fields together. `init(from:)`
+///   refuses the type's `refusedKeys`, which DAG-CBOR refuses as non-fields.
+/// - When the body declares no `CodingKeys`, the macro declares one, so a
+///   `CodingKeys` declared elsewhere fails to compile.
 /// - The struct declares no `encode(to:)` or `init(from:)` of its own (they
 ///   would be redeclarations). Property wrappers, implicitly unwrapped
 ///   optionals and members under `#if` are refused.
+@attached(member, names: named(CodingKeys))
 @attached(
     extension,
     conformances: DagCBORCodable, Encodable, Decodable,

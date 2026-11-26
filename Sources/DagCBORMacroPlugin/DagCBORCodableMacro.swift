@@ -7,7 +7,7 @@ struct DagCBORMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [DagCBORCodableMacro.self]
 }
 
-public struct DagCBORCodableMacro: ExtensionMacro {
+public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
     struct Failure: Error, CustomStringConvertible {
         let description: String
         init(_ description: String) { self.description = description }
@@ -20,6 +20,23 @@ public struct DagCBORCodableMacro: ExtensionMacro {
         let key: String
         let type: String
         let isOptional: Bool
+    }
+
+    /// `CodingKeys` listing the coded fields, when the struct declares none.
+    /// The generated `Codable` keys by `DagCBORKey`, not by it: it is there so
+    /// a `CodingKeys` declared elsewhere, which the macro cannot see, fails
+    /// to compile as a redeclaration. Errors are reported by the extension.
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingMembersOf declaration: some DeclGroupSyntax,
+        conformingTo protocols: [TypeSyntax],
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let structDecl = declaration.as(StructDeclSyntax.self),
+              (try? declaredCodingKeys(of: structDecl)) == .some(nil),
+              let fields = try? codedFields(of: structDecl) else { return [] }
+        let cases = fields.map { "case \($0.name)" }.joined(separator: "\n    ")
+        return ["enum CodingKeys: String, CodingKey {\n    \(raw: cases)\n}"]
     }
 
     public static func expansion(
@@ -73,9 +90,10 @@ public struct DagCBORCodableMacro: ExtensionMacro {
 
         // Keys are `DagCBORKey`s holding the key text, which nothing outside
         // the struct can rename.
+        let keys = declared.map { literal($0.key) }.joined(separator: ", ")
         var decode = [
-            "try Self.checkDecoding(from: decoder)",
             "let container = try decoder.container(keyedBy: DagCBORKit.DagCBORKey.self)",
+            "try DagCBORKit.DagCBORKey.refuse(Self.refusedKeys, except: [\(keys)], in: container)",
         ]
         var encode = ["var container = encoder.container(keyedBy: DagCBORKit.DagCBORKey.self)"]
         for field in declared {

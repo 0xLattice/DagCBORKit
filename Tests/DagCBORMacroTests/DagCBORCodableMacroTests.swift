@@ -20,19 +20,24 @@ final class DagCBORCodableMacroTests: XCTestCase {
             }
             """,
             expandedSource: """
-
             public struct Header {
                 public let version: UInt16
                 public let parent: Link?
                 public var nonce: UInt64
                 static let zero = 0
                 var doubled: UInt64 { nonce * 2 }
+
+                enum CodingKeys: String, CodingKey {
+                    case version
+                    case parent
+                    case nonce
+                }
             }
 
             extension Header: DagCBORKit.DagCBORCodable, Encodable, Decodable {
                 public init(from decoder: any Decoder) throws {
-                    try Self.checkDecoding(from: decoder)
                     let container = try decoder.container(keyedBy: DagCBORKit.DagCBORKey.self)
+                    try DagCBORKit.DagCBORKey.refuse(Self.refusedKeys, except: ["version", "parent", "nonce"], in: container)
                     self.version = try container.decode(UInt16.self, forKey: DagCBORKit.DagCBORKey("version"))
                     self.parent = try container.decodeIfPresent(Link.self, forKey: DagCBORKit.DagCBORKey("parent"))
                     self.nonce = try container.decode(UInt64.self, forKey: DagCBORKit.DagCBORKey("nonce"))
