@@ -51,6 +51,12 @@ struct Retired {
     static var refusedKeys: [String] { ["gone", "kept"] }
 }
 
+/// No stored fields: an empty map.
+@DagCBORCodable
+struct Empty {
+    static let unit = 1
+}
+
 /// What a reader or writer does is stated in bytes: the canonical DAG-CBOR
 /// of a value, and the verdict on every other spelling.
 @Suite("DAG-CBOR is read and written in its one canonical form")
@@ -138,6 +144,13 @@ struct DagCBORKitTests {
         #expect(try JSONDecoder().decode(Keyed.self, from: Data(json.utf8)).b == 2)
         let bytes = Self.bytes([0xa2], Self.text("bee"), [0x02], Self.text("default"), [0x01])
         #expect(try DagCBORCanonical.encode(Keyed(default: 1, b: 2, note: nil)) == bytes)
+    }
+
+    @Test("A struct with no fields is an empty map")
+    func emptyStruct() throws {
+        #expect(try DagCBORCanonical.encode(Empty()) == [0xa0])
+        _ = try DagCBORCanonical.decode(Empty.self, from: Data([0xa0]))
+        _ = try JSONDecoder().decode(Empty.self, from: Data("{}".utf8))
     }
 
     @Test("A refused key is refused by both decodings")

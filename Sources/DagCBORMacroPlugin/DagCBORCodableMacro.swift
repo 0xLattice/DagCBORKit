@@ -35,6 +35,8 @@ public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
         guard let structDecl = declaration.as(StructDeclSyntax.self),
               (try? declaredCodingKeys(of: structDecl)) == .some(nil),
               let fields = try? codedFields(of: structDecl) else { return [] }
+        // An enum with no cases can have no raw type.
+        if fields.isEmpty { return ["enum CodingKeys: CodingKey {}"] }
         let cases = fields.map { "case \($0.name)" }.joined(separator: "\n    ")
         return ["enum CodingKeys: String, CodingKey {\n    \(raw: cases)\n}"]
     }
