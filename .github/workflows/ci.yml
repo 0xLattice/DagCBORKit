@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-macos:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build --build-tests
+      - run: swift test
+
+  # Linux runs the same suite on the toolchain the node ships with.
+  test-linux:
+    runs-on: ubuntu-latest
+    container: swift:6.1-jammy
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build --build-tests
+      - run: swift test
