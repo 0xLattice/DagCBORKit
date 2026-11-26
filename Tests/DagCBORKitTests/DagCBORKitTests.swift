@@ -4,7 +4,7 @@ import DagCBORMacro
 
 @DagCBORCodable
 struct Sample: Equatable {
-    enum Kind: String, DagCBORCodable { case plain, special }
+    enum Kind: String, Codable, DagCBORCodable { case plain, special }
 
     let height: UInt64
     let delta: Int64
@@ -32,11 +32,16 @@ struct Checked {
     }
 }
 
-/// No `CodingKeys` of its own: the macro declares one, which `Codable` uses.
+/// Keyword names, a shared type, and a key renamed by `CodingKeys`.
 @DagCBORCodable
-struct Keyed: Codable {
-    let `default`: UInt64
+struct Keyed {
+    let `default`, b: UInt64
     let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case `default`, note
+        case b = "bee"
+    }
 }
 
 /// What a reader or writer does is stated in bytes: the canonical DAG-CBOR
@@ -115,17 +120,25 @@ struct DagCBORKitTests {
         }
     }
 
-    @Test("Codable keys the fields the macro writes")
-    func codableUsesTheMacrosKeys() throws {
+    @Test("Codable and DAG-CBOR key the same fields alike")
+    func codableKeysLikeDagCBOR() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        let json = String(decoding: try encoder.encode(Keyed(default: 1, note: "n")), as: UTF8.self)
-        #expect(json == #"{"default":1,"note":"n"}"#)
-        #expect(try DagCBORCanonical.encode(Keyed(default: 1, note: nil)) == Self.bytes([0xa1], Self.text("default"), [0x01]))
+        let json = String(decoding: try encoder.encode(Keyed(default: 1, b: 2, note: "n")), as: UTF8.self)
+        #expect(json == #"{"bee":2,"default":1,"note":"n"}"#)
+        let absent = String(decoding: try encoder.encode(Keyed(default: 1, b: 2, note: nil)), as: UTF8.self)
+        #expect(absent == #"{"bee":2,"default":1}"#)
+        #expect(try JSONDecoder().decode(Keyed.self, from: Data(json.utf8)).b == 2)
+        let bytes = Self.bytes([0xa2], Self.text("bee"), [0x02], Self.text("default"), [0x01])
+        #expect(try DagCBORCanonical.encode(Keyed(default: 1, b: 2, note: nil)) == bytes)
     }
 
     @Test("A rule over the fields together refuses a value whose fields read")
     func checksFieldsTogether() throws {
+        #expect(throws: Checked.Inverted.self) {
+            try JSONDecoder().decode(Checked.self, from: Data(#"{"low":2,"high":1}"#.utf8))
+        }
+        #expect(throws: Never.self) { try JSONDecoder().decode(Checked.self, from: Data(#"{"low":1,"high":2}"#.utf8)) }
         let ordered = try DagCBORCanonical.encode(Checked(low: 1, high: 2))
         #expect(try DagCBORCanonical.decode(Checked.self, from: Data(ordered)).high == 2)
         let inverted = try DagCBORCanonical.encode(Checked(low: 2, high: 1))

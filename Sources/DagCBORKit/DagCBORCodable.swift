@@ -20,10 +20,33 @@ public protocol DagCBORCodable {
     /// Generated readers (`@DagCBORCodable`) call it once every field is
     /// read. None by default.
     func checkDagCBORFields() throws
+    /// Refuses a `Codable` input before its fields are read, for a rule over
+    /// the input itself (keys it must not carry, say). The generated
+    /// `init(from:)` calls it. None by default.
+    static func checkDecoding(from decoder: any Decoder) throws
 }
 
 extension DagCBORCodable {
     @inlinable public func checkDagCBORFields() throws {}
+    @inlinable public static func checkDecoding(from decoder: any Decoder) throws {}
+}
+
+/// A `Codable` key that is its text: what `@DagCBORCodable`'s `Codable`
+/// conformance keys fields by.
+public struct DagCBORKey: CodingKey {
+    public let stringValue: String
+
+    @inlinable public init(_ stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    @inlinable public init?(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    @inlinable public var intValue: Int? { nil }
+
+    @inlinable public init?(intValue: Int) { nil }
 }
 
 /// Reads DAG-CBOR items in order from encoded bytes. Heads of any width are

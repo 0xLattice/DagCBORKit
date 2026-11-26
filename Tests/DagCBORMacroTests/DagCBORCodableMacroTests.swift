@@ -5,9 +5,9 @@ import XCTest
 import DagCBORMacroPlugin
 
 final class DagCBORCodableMacroTests: XCTestCase {
-    let macros = ["DagCBORCodable": MacroSpec(type: DagCBORCodableMacro.self, conformances: ["DagCBORCodable"])]
+    let macros = ["DagCBORCodable": MacroSpec(type: DagCBORCodableMacro.self, conformances: ["DagCBORCodable", "Encodable", "Decodable"])]
 
-    func test_fieldsInCanonicalKeyOrder_optionalsAbsentWhenNil() {
+    func test_oneFieldListWritesBothConformances() {
         assertMacroExpansion(
             """
             @DagCBORCodable
@@ -20,21 +20,32 @@ final class DagCBORCodableMacroTests: XCTestCase {
             }
             """,
             expandedSource: """
+
             public struct Header {
                 public let version: UInt16
                 public let parent: Link?
                 public var nonce: UInt64
                 static let zero = 0
                 var doubled: UInt64 { nonce * 2 }
-
-                enum CodingKeys: String, CodingKey {
-                    case version
-                    case parent
-                    case nonce
-                }
             }
 
-            extension Header: DagCBORKit.DagCBORCodable {
+            extension Header: DagCBORKit.DagCBORCodable, Encodable, Decodable {
+                public init(from decoder: any Decoder) throws {
+                    try Self.checkDecoding(from: decoder)
+                    let container = try decoder.container(keyedBy: DagCBORKit.DagCBORKey.self)
+                    self.version = try container.decode(UInt16.self, forKey: DagCBORKit.DagCBORKey("version"))
+                    self.parent = try container.decodeIfPresent(Link.self, forKey: DagCBORKit.DagCBORKey("parent"))
+                    self.nonce = try container.decode(UInt64.self, forKey: DagCBORKit.DagCBORKey("nonce"))
+                    try self.checkDagCBORFields()
+                }
+
+                public func encode(to encoder: any Encoder) throws {
+                    var container = encoder.container(keyedBy: DagCBORKit.DagCBORKey.self)
+                    try container.encode(self.version, forKey: DagCBORKit.DagCBORKey("version"))
+                    try container.encodeIfPresent(self.parent, forKey: DagCBORKit.DagCBORKey("parent"))
+                    try container.encode(self.nonce, forKey: DagCBORKit.DagCBORKey("nonce"))
+                }
+
                 public init(dagCBOR reader: inout DagCBORKit.DagCBORReader) throws {
                     _ = try reader.readMapCount()
                     try reader.readKey("nonce")
@@ -62,91 +73,6 @@ final class DagCBORCodableMacroTests: XCTestCase {
                     }
                     writer.writeText("version")
                     try self.version.writeDagCBOR(to: &writer)
-                }
-            }
-            """,
-            macroSpecs: macros
-        )
-    }
-
-    func test_codingKeysChooseTheFieldsAndTheirKeys() {
-        assertMacroExpansion(
-            """
-            @DagCBORCodable
-            struct Entry {
-                let identifier: String
-                var cached: Int = 0
-                enum CodingKeys: String, CodingKey {
-                    case identifier = "id"
-                }
-            }
-            """,
-            expandedSource: """
-            struct Entry {
-                let identifier: String
-                var cached: Int = 0
-                enum CodingKeys: String, CodingKey {
-                    case identifier = "id"
-                }
-            }
-
-            extension Entry: DagCBORKit.DagCBORCodable {
-                init(dagCBOR reader: inout DagCBORKit.DagCBORReader) throws {
-                    _ = try reader.readMapCount()
-                    try reader.readKey("id")
-                    let field0: String = try .init(dagCBOR: &reader)
-                    self.identifier = field0
-                    try self.checkDagCBORFields()
-                }
-
-                func writeDagCBOR(to writer: inout DagCBORKit.DagCBORWriter) throws {
-                    try writer.writeMapHeader(count: 1)
-                    writer.writeText("id")
-                    try self.identifier.writeDagCBOR(to: &writer)
-                }
-            }
-            """,
-            macroSpecs: macros
-        )
-    }
-
-    func test_keywordNamesAndSharedTypesAreTheirPlainNames() {
-        assertMacroExpansion(
-            """
-            @DagCBORCodable
-            struct S {
-                let `default`, b: UInt64
-                enum CodingKeys: String, CodingKey {
-                    case `default`, b
-                }
-            }
-            """,
-            expandedSource: """
-            struct S {
-                let `default`, b: UInt64
-                enum CodingKeys: String, CodingKey {
-                    case `default`, b
-                }
-            }
-
-            extension S: DagCBORKit.DagCBORCodable {
-                init(dagCBOR reader: inout DagCBORKit.DagCBORReader) throws {
-                    _ = try reader.readMapCount()
-                    try reader.readKey("b")
-                    let field0: UInt64 = try .init(dagCBOR: &reader)
-                    try reader.readKey("default")
-                    let field1: UInt64 = try .init(dagCBOR: &reader)
-                    self.b = field0
-                    self.`default` = field1
-                    try self.checkDagCBORFields()
-                }
-
-                func writeDagCBOR(to writer: inout DagCBORKit.DagCBORWriter) throws {
-                    try writer.writeMapHeader(count: 2)
-                    writer.writeText("b")
-                    try self.b.writeDagCBOR(to: &writer)
-                    writer.writeText("default")
-                    try self.`default`.writeDagCBOR(to: &writer)
                 }
             }
             """,

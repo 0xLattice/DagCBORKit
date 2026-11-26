@@ -7,7 +7,7 @@ struct DagCBORMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [DagCBORCodableMacro.self]
 }
 
-public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
+public struct DagCBORCodableMacro: ExtensionMacro {
     struct Failure: Error, CustomStringConvertible {
         let description: String
         init(_ description: String) { self.description = description }
@@ -22,23 +22,6 @@ public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
         let isOptional: Bool
     }
 
-    /// `CodingKeys` listing the coded fields, when the struct declares none:
-    /// synthesized `Codable` then keys exactly the fields the macro writes,
-    /// and a `CodingKeys` declared elsewhere fails to compile as a
-    /// redeclaration. Errors are reported by the extension.
-    public static func expansion(
-        of node: AttributeSyntax,
-        providingMembersOf declaration: some DeclGroupSyntax,
-        conformingTo protocols: [TypeSyntax],
-        in context: some MacroExpansionContext
-    ) throws -> [DeclSyntax] {
-        guard let structDecl = declaration.as(StructDeclSyntax.self),
-              (try? declaredCodingKeys(of: structDecl)) == .some(nil),
-              let fields = try? codedFields(of: structDecl) else { return [] }
-        let cases = fields.map { "case \($0.name)" }.joined(separator: "\n    ")
-        return ["enum CodingKeys: String, CodingKey {\n    \(raw: cases)\n}"]
-    }
-
     public static func expansion(
         of node: AttributeSyntax,
         attachedTo declaration: some DeclGroupSyntax,
@@ -49,7 +32,10 @@ public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
         guard let structDecl = declaration.as(StructDeclSyntax.self) else {
             throw Failure("@DagCBORCodable applies to a struct")
         }
-        let fields = try codedFields(of: structDecl).sorted { keyPrecedes($0.key, $1.key) }
+        // `Codable` codes the fields in declaration (or `CodingKeys`) order,
+        // as synthesized `Codable` does; DAG-CBOR in canonical key order.
+        let declared = try codedFields(of: structDecl)
+        let fields = declared.sorted { keyPrecedes($0.key, $1.key) }
         let access = accessModifier(of: structDecl)
         let required = fields.filter { !$0.isOptional }.count
 
@@ -85,9 +71,35 @@ public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
             }
         }
 
-        let conformance = protocols.isEmpty ? "" : ": DagCBORKit.DagCBORCodable"
+        // Keys are `DagCBORKey`s holding the key text, which nothing outside
+        // the struct can rename.
+        var decode = [
+            "try Self.checkDecoding(from: decoder)",
+            "let container = try decoder.container(keyedBy: DagCBORKit.DagCBORKey.self)",
+        ]
+        var encode = ["var container = encoder.container(keyedBy: DagCBORKit.DagCBORKey.self)"]
+        for field in declared {
+            let key = "DagCBORKit.DagCBORKey(\(literal(field.key)))"
+            let suffix = field.isOptional ? "IfPresent" : ""
+            decode.append("self.\(field.name) = try container.decode\(suffix)(\(field.type).self, forKey: \(key))")
+            encode.append("try container.encode\(suffix)(self.\(field.name), forKey: \(key))")
+        }
+        decode.append("try self.checkDagCBORFields()")
+
+        let conformance = protocols.isEmpty ? "" : ": " + protocols.map { protocolType in
+            let name = protocolType.trimmedDescription
+            return name == "DagCBORCodable" ? "DagCBORKit.DagCBORCodable" : name
+        }.joined(separator: ", ")
         let source = """
         extension \(type.trimmedDescription)\(conformance) {
+            \(access)init(from decoder: any Decoder) throws {
+                \(decode.joined(separator: "\n        "))
+            }
+
+            \(access)func encode(to encoder: any Encoder) throws {
+                \(encode.joined(separator: "\n        "))
+            }
+
             \(access)init(dagCBOR reader: inout DagCBORKit.DagCBORReader) throws {
                 \(read.joined(separator: "\n        "))
             }
