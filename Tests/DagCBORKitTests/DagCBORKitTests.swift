@@ -32,6 +32,13 @@ struct Checked {
     }
 }
 
+/// No `CodingKeys` of its own: the macro declares one, which `Codable` uses.
+@DagCBORCodable
+struct Keyed: Codable {
+    let `default`: UInt64
+    let note: String?
+}
+
 /// What a reader or writer does is stated in bytes: the canonical DAG-CBOR
 /// of a value, and the verdict on every other spelling.
 @Suite("DAG-CBOR is read and written in its one canonical form")
@@ -106,6 +113,15 @@ struct DagCBORKitTests {
         for spelling in spellings {
             #expect(refused(spelling), "\(spelling)")
         }
+    }
+
+    @Test("Codable keys the fields the macro writes")
+    func codableUsesTheMacrosKeys() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let json = String(decoding: try encoder.encode(Keyed(default: 1, note: "n")), as: UTF8.self)
+        #expect(json == #"{"default":1,"note":"n"}"#)
+        #expect(try DagCBORCanonical.encode(Keyed(default: 1, note: nil)) == Self.bytes([0xa1], Self.text("default"), [0x01]))
     }
 
     @Test("A rule over the fields together refuses a value whose fields read")

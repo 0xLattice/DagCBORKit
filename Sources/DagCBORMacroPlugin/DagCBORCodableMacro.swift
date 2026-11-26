@@ -7,7 +7,7 @@ struct DagCBORMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [DagCBORCodableMacro.self]
 }
 
-public struct DagCBORCodableMacro: ExtensionMacro {
+public struct DagCBORCodableMacro: ExtensionMacro, MemberMacro {
     struct Failure: Error, CustomStringConvertible {
         let description: String
         init(_ description: String) { self.description = description }
@@ -20,6 +20,23 @@ public struct DagCBORCodableMacro: ExtensionMacro {
         let key: String
         let type: String
         let isOptional: Bool
+    }
+
+    /// `CodingKeys` listing the coded fields, when the struct declares none:
+    /// synthesized `Codable` then keys exactly the fields the macro writes,
+    /// and a `CodingKeys` declared elsewhere fails to compile as a
+    /// redeclaration. Errors are reported by the extension.
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingMembersOf declaration: some DeclGroupSyntax,
+        conformingTo protocols: [TypeSyntax],
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let structDecl = declaration.as(StructDeclSyntax.self),
+              (try? declaredCodingKeys(of: structDecl)) == .some(nil),
+              let fields = try? codedFields(of: structDecl) else { return [] }
+        let cases = fields.map { "case \($0.name)" }.joined(separator: "\n    ")
+        return ["enum CodingKeys: String, CodingKey {\n    \(raw: cases)\n}"]
     }
 
     public static func expansion(
@@ -128,11 +145,16 @@ public struct DagCBORCodableMacro: ExtensionMacro {
         }
 
         var keyed: [(name: String, key: String)] = order.map { ($0, $0) }
-        if let codingKeys = decl.memberBlock.members
-            .compactMap({ $0.decl.as(EnumDeclSyntax.self) })
-            .first(where: { $0.name.text == "CodingKeys" }) {
+        if let codingKeys = try declaredCodingKeys(of: decl) {
             keyed = try codingKeys.memberBlock.members
-                .compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
+                .map { member in
+                    // Only cases: `#if`, or a `stringValue` of its own, would
+                    // key fields otherwise than the cases read.
+                    guard let cases = member.decl.as(EnumCaseDeclSyntax.self) else {
+                        throw Failure("@DagCBORCodable: CodingKeys may hold only cases")
+                    }
+                    return cases
+                }
                 .flatMap(\.elements)
                 .map { element in
                     let name = unescaped(element.name.text)
@@ -154,6 +176,23 @@ public struct DagCBORCodableMacro: ExtensionMacro {
             let (type, isOptional) = unwrappingOptional(property.type)
             return Field(name: property.spelling, key: key, type: type, isOptional: isOptional)
         }
+    }
+
+    /// The struct's own `CodingKeys` enum, if its body declares one. Any
+    /// other declaration of that name is refused.
+    static func declaredCodingKeys(of decl: StructDeclSyntax) throws -> EnumDeclSyntax? {
+        for member in decl.memberBlock.members {
+            if let enumDecl = member.decl.as(EnumDeclSyntax.self), enumDecl.name.text == "CodingKeys" {
+                return enumDecl
+            }
+            let named = member.decl.as(TypeAliasDeclSyntax.self)?.name.text
+                ?? member.decl.as(StructDeclSyntax.self)?.name.text
+                ?? member.decl.as(ClassDeclSyntax.self)?.name.text
+            if named == "CodingKeys" {
+                throw Failure("@DagCBORCodable: CodingKeys must be an enum of cases")
+            }
+        }
+        return nil
     }
 
     /// `name` without the backticks that let a keyword be one.

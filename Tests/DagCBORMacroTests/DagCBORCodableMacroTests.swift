@@ -26,6 +26,12 @@ final class DagCBORCodableMacroTests: XCTestCase {
                 public var nonce: UInt64
                 static let zero = 0
                 var doubled: UInt64 { nonce * 2 }
+
+                enum CodingKeys: String, CodingKey {
+                    case version
+                    case parent
+                    case nonce
+                }
             }
 
             extension Header: DagCBORKit.DagCBORCodable {
@@ -157,6 +163,9 @@ final class DagCBORCodableMacroTests: XCTestCase {
             ("struct S {\n    @Boxed var x: Int\n}", "@DagCBORCodable: 'x' has an attribute (a property wrapper?), which is not supported"),
             ("struct S {\n    var x: Int!\n}", "@DagCBORCodable: 'x' is implicitly unwrapped; declare it optional"),
             ("struct S {\n    #if DEBUG\n    var x: Int = 0\n    #endif\n}", "@DagCBORCodable: members under #if are not supported"),
+            ("struct S {\n    let x: Int\n    enum CodingKeys: String, CodingKey {\n        case x\n        #if DEBUG\n        case y\n        #endif\n    }\n}", "@DagCBORCodable: CodingKeys may hold only cases"),
+            ("struct S {\n    let x: Int\n    enum CodingKeys: String, CodingKey {\n        case x\n        var stringValue: String {\n            \"z\"\n        }\n    }\n}", "@DagCBORCodable: CodingKeys may hold only cases"),
+            ("struct S {\n    let x: Int\n    typealias CodingKeys = OtherKeys\n}", "@DagCBORCodable: CodingKeys must be an enum of cases"),
         ]
         for (source, message) in cases {
             assertMacroExpansion(
