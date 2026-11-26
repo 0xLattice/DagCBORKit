@@ -104,12 +104,59 @@ final class DagCBORCodableMacroTests: XCTestCase {
         )
     }
 
+    func test_keywordNamesAndSharedTypesAreTheirPlainNames() {
+        assertMacroExpansion(
+            """
+            @DagCBORCodable
+            struct S {
+                let `default`, b: UInt64
+                enum CodingKeys: String, CodingKey {
+                    case `default`, b
+                }
+            }
+            """,
+            expandedSource: """
+            struct S {
+                let `default`, b: UInt64
+                enum CodingKeys: String, CodingKey {
+                    case `default`, b
+                }
+            }
+
+            extension S: DagCBORKit.DagCBORCodable {
+                init(dagCBOR reader: inout DagCBORKit.DagCBORReader) throws {
+                    _ = try reader.readMapCount()
+                    try reader.readKey("b")
+                    let field0: UInt64 = try .init(dagCBOR: &reader)
+                    try reader.readKey("default")
+                    let field1: UInt64 = try .init(dagCBOR: &reader)
+                    self.b = field0
+                    self.`default` = field1
+                    try self.checkDagCBORFields()
+                }
+
+                func writeDagCBOR(to writer: inout DagCBORKit.DagCBORWriter) throws {
+                    try writer.writeMapHeader(count: 2)
+                    writer.writeText("b")
+                    try self.b.writeDagCBOR(to: &writer)
+                    writer.writeText("default")
+                    try self.`default`.writeDagCBOR(to: &writer)
+                }
+            }
+            """,
+            macroSpecs: macros
+        )
+    }
+
     func test_refusesWhatItCannotRead() {
         let cases = [
             ("enum E {\n    case a\n}", "@DagCBORCodable applies to a struct"),
             ("struct S {\n    let x = 1\n}", "@DagCBORCodable: 'x' needs a type annotation"),
             ("struct S {\n    let x: Int = 1\n}", "@DagCBORCodable: 'x' is a 'let' with a value, which reading cannot set"),
             ("struct S {\n    let x: Int\n    enum CodingKeys: String, CodingKey {\n        case y\n    }\n}", "@DagCBORCodable: CodingKeys.y names no stored property"),
+            ("struct S {\n    @Boxed var x: Int\n}", "@DagCBORCodable: 'x' has an attribute (a property wrapper?), which is not supported"),
+            ("struct S {\n    var x: Int!\n}", "@DagCBORCodable: 'x' is implicitly unwrapped; declare it optional"),
+            ("struct S {\n    #if DEBUG\n    var x: Int = 0\n    #endif\n}", "@DagCBORCodable: members under #if are not supported"),
         ]
         for (source, message) in cases {
             assertMacroExpansion(

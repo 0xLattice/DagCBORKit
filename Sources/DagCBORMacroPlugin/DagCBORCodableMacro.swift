@@ -15,6 +15,7 @@ public struct DagCBORCodableMacro: ExtensionMacro {
 
     /// A coded stored property: its map key, and its type without `Optional`.
     struct Field {
+        /// The property as code refers to it, with backticks if it had them.
         let name: String
         let key: String
         let type: String
@@ -85,23 +86,44 @@ public struct DagCBORCodableMacro: ExtensionMacro {
     /// The stored properties coded, with their keys: those `CodingKeys`
     /// lists, else every stored instance property.
     static func codedFields(of decl: StructDeclSyntax) throws -> [Field] {
-        var stored: [String: (type: TypeSyntax, settable: Bool)] = [:]
+        var stored: [String: (spelling: String, type: TypeSyntax, settable: Bool)] = [:]
         var order: [String] = []
         for member in decl.memberBlock.members {
+            // Members under `#if` may or may not be compiled: which, the
+            // macro cannot know, and `Codable` codes those that are.
+            if member.decl.is(IfConfigDeclSyntax.self) {
+                throw Failure("@DagCBORCodable: members under #if are not supported")
+            }
             guard let variable = member.decl.as(VariableDeclSyntax.self),
                   !variable.modifiers.contains(where: { ["static", "class"].contains($0.name.text) }) else { continue }
             let isLet = variable.bindingSpecifier.tokenKind == .keyword(.let)
-            for binding in variable.bindings {
+            // `let a, b: T` gives both names the type of the last.
+            var sharedType: TypeSyntax?
+            var bindings: [(name: String, binding: PatternBindingSyntax, type: TypeSyntax?)] = []
+            for binding in variable.bindings.reversed() {
                 guard let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else {
                     throw Failure("@DagCBORCodable: a stored property must be a plain name")
                 }
+                if let type = binding.typeAnnotation?.type { sharedType = type }
+                else if binding.initializer != nil || binding.accessorBlock != nil { sharedType = nil }
+                bindings.insert((name, binding, binding.typeAnnotation?.type ?? sharedType), at: 0)
+            }
+            for (name, binding, type) in bindings {
                 if let accessors = binding.accessorBlock, isComputed(accessors) { continue }
-                guard let type = binding.typeAnnotation?.type else {
+                // A wrapped property is coded as its wrapper, which the macro
+                // does not see.
+                guard variable.attributes.isEmpty else {
+                    throw Failure("@DagCBORCodable: '\(name)' has an attribute (a property wrapper?), which is not supported")
+                }
+                guard let type else {
                     throw Failure("@DagCBORCodable: '\(name)' needs a type annotation")
                 }
+                guard !type.is(ImplicitlyUnwrappedOptionalTypeSyntax.self) else {
+                    throw Failure("@DagCBORCodable: '\(name)' is implicitly unwrapped; declare it optional")
+                }
                 // A `let` with a value is never read; one with no value is.
-                stored[name] = (type, !(isLet && binding.initializer != nil))
-                order.append(name)
+                stored[unescaped(name)] = (name, type, !(isLet && binding.initializer != nil))
+                order.append(unescaped(name))
             }
         }
 
@@ -113,7 +135,7 @@ public struct DagCBORCodableMacro: ExtensionMacro {
                 .compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
                 .flatMap(\.elements)
                 .map { element in
-                    let name = element.name.text
+                    let name = unescaped(element.name.text)
                     guard let raw = element.rawValue else { return (name, name) }
                     guard let text = raw.value.as(StringLiteralExprSyntax.self)?.representedLiteralValue else {
                         throw Failure("@DagCBORCodable: CodingKeys.\(name) needs a plain string raw value")
@@ -130,8 +152,13 @@ public struct DagCBORCodableMacro: ExtensionMacro {
                 throw Failure("@DagCBORCodable: '\(name)' is a 'let' with a value, which reading cannot set")
             }
             let (type, isOptional) = unwrappingOptional(property.type)
-            return Field(name: name, key: key, type: type, isOptional: isOptional)
+            return Field(name: property.spelling, key: key, type: type, isOptional: isOptional)
         }
+    }
+
+    /// `name` without the backticks that let a keyword be one.
+    static func unescaped(_ name: String) -> String {
+        name.hasPrefix("`") && name.hasSuffix("`") && name.count > 1 ? String(name.dropFirst().dropLast()) : name
     }
 
     static func isComputed(_ accessors: AccessorBlockSyntax) -> Bool {
